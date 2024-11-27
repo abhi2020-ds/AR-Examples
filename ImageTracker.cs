@@ -1,10 +1,9 @@
-// See https://youtu.be/gpaq5bAjya8  for accompanying tutorial and usage!
-
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
+using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(ARTrackedImageManager))]
 public class ImageTracker : MonoBehaviour
@@ -16,22 +15,29 @@ public class ImageTracker : MonoBehaviour
     // as their corresponding 2D images in the reference image library 
     public GameObject[] ArPrefabs;
 
-    public Vector3 offset; // Offset from the tracked image's position
-
-    public Transform cameraTransform; // Reference to the camera's transform
-    public float distanceFromCamera = 1.0f; // Distance from the camera
-
-    public Vector3 positionOffset = new Vector3(0, 0, 0); // Offset from the image target's position
-    public Vector3 rotationOffset = new Vector3(0, 0, 0); // Offset for rotation adjustment
-
-
     // Keep dictionary array of created prefabs
     private readonly Dictionary<string, GameObject> _instantiatedPrefabs = new Dictionary<string, GameObject>();
+
+    // Singleton pattern for managing ARSession persistence across scenes
+    private static bool arSessionInitialized = false;
+    private ARSession _arSession;
 
     void Awake()
     {
         // Cache a reference to the Tracked Image Manager component
+        _arSession = FindObjectOfType<ARSession>();
         _trackedImagesManager = GetComponent<ARTrackedImageManager>();
+
+        if (_arSession != null && !arSessionInitialized)
+        {
+            // Ensure AR session persists across scene transitions
+            DontDestroyOnLoad(gameObject); // Keep this object alive across scenes
+            arSessionInitialized = true;  // Set flag to avoid multiple calls to DontDestroyOnLoad
+        }
+        else if (_arSession == null)
+        {
+            Debug.LogError("ARSession not found in the scene.");
+        }
     }
 
     void OnEnable()
@@ -56,20 +62,6 @@ public class ImageTracker : MonoBehaviour
             // Get the name of the reference image
             var imageName = trackedImage.referenceImage.name;
             // Now loop over the array of prefabs
-
-            Vector3 imagePosition = trackedImage.transform.position + positionOffset;
-            Quaternion imageRotation = trackedImage.transform.rotation * Quaternion.Euler(rotationOffset); ;
-
-            // Get the size of the tracked image
-            Vector2 imageSize = trackedImage.size;
-
-            // Calculate the center of the tracked image
-            Vector3 centerPosition = imagePosition + trackedImage.transform.forward * imageSize.y * 0.5f;
-
-            // Get the position of the image
-            // Adjust the y-coordinate of the prefab's position to match the y-coordinate of the image
-            //Vector3 centerPosition = new Vector3(transform.position.x, imagePosition.y, transform.position.z);
-
             foreach (var curPrefab in ArPrefabs)
             {
                 // Check whether this prefab matches the tracked image name, and that
@@ -78,27 +70,10 @@ public class ImageTracker : MonoBehaviour
                     && !_instantiatedPrefabs.ContainsKey(imageName))
                 {
                     // Instantiate the prefab, parenting it to the ARTrackedImage
-                    var newPrefab = Instantiate(curPrefab, centerPosition, imageRotation);
+                    var newPrefab = Instantiate(curPrefab, trackedImage.transform);
                     // Add the created prefab to our array
-
-                    // Ensure the prefab faces the camera
-                    transform.LookAt(cameraTransform);
-
                     _instantiatedPrefabs[imageName] = newPrefab;
                 }
-
-                else
-                {
-                    // Update the position of the instantiated prefab to match the center of the tracked image
-                    curPrefab.transform.position = centerPosition;
-                    curPrefab.transform.rotation = imageRotation;
-
-                    // Ensure the prefab faces the camera
-                    transform.LookAt(cameraTransform);
-
-                }
-
-
             }
         }
 
@@ -121,4 +96,32 @@ public class ImageTracker : MonoBehaviour
             //_instantiatedPrefabs[trackedImage.referenceImage.name].SetActive(false);
         }
     }
+
+    // This function will be called whenever a new scene is loaded
+    void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // Ensure that the AR session is still running after the scene is loaded
+        if (_arSession != null && !_arSession.enabled)
+        {
+            _arSession.enabled = true;
+        }
+
+        // Optionally, re-initialize or re-enable any AR components if needed
+        // For example, you can also check if AR session was initialized properly.
+        // This is a good place to ensure AR functionality is properly set up after scene load.
+    }
+
+    void Start()
+    {
+        // Subscribe to the scene loaded event to re-initialize AR session if needed
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    void OnApplicationQuit()
+    {
+        // Unsubscribe from the scene change event to avoid memory leaks
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
 }
+
